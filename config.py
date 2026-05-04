@@ -26,7 +26,7 @@ ADMIN_LIST = ADMINS
 # --- API INTEGRATSIYALARI ---
 SMM_API_KEY = os.getenv("SMM_API_KEY", "").strip()
 SMM_API_URL = os.getenv("SMM_API_URL", "https://smmwiz.com/api/v2").strip()
-USD_RATE = 12850
+USD_RATE = 13000
 DEFAULT_SMM_MARKUP_PERCENT = float(os.getenv("DEFAULT_SMM_MARKUP_PERCENT", "20"))
 POSTGRES_DSN = os.getenv(
     "POSTGRES_DSN",
@@ -34,7 +34,8 @@ POSTGRES_DSN = os.getenv(
 )
 
 SMS_API_KEY = os.getenv("SMS_API_KEY", "").strip()
-SMS_API_URL = os.getenv("SMS_API_URL", "https://api.sms-activate.org/stubs/handler_api.php").strip()
+SMS_API_URL = os.getenv("SMS_API_URL", "https://locksmm.uz").strip()
+STARTUP_NOTIFY_RECENT_DAYS = int(os.getenv("STARTUP_NOTIFY_RECENT_DAYS", "30"))
 MINI_APP_AUTH_MAX_AGE = int(os.getenv("MINI_APP_AUTH_MAX_AGE", "3600"))
 WEB_APP_ALLOWED_ORIGINS = [
     origin.strip()

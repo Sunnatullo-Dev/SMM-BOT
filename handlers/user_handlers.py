@@ -1,9 +1,14 @@
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from aiogram import F, Router, types
 
 from database.models import db
 from keyboards.navigation import user_home_keyboard
+
+logger = logging.getLogger(__name__)
+UZBEKISTAN_TZ = ZoneInfo("Asia/Tashkent")
 
 router = Router()
 
@@ -57,9 +62,10 @@ async def orders_handler(message: types.Message):
     for order in orders:
         try:
             created_at = datetime.strptime(str(order["created_at"])[:19], "%Y-%m-%d %H:%M:%S")
-            created_at += timedelta(hours=5)
+            created_at = created_at.replace(tzinfo=timezone.utc).astimezone(UZBEKISTAN_TZ)
             formatted_date = created_at.strftime("%Y-%m-%d %H:%M")
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error formatting date for order {order.get('id')}: {e}")
             formatted_date = str(order["created_at"])[:16]
 
         status_emoji = {

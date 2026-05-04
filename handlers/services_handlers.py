@@ -1,5 +1,6 @@
 import logging
 import secrets
+import time
 from html import escape, unescape
 
 from aiogram import F, Router, types
@@ -24,6 +25,10 @@ GROUP_SERVICES_TEXT = "Marhamat, kerakli ta'rifni tanlang! Narxlar 1000 tasi uch
 DEFAULT_USD_RATE = 12_800
 DEFAULT_MARKUP_PERCENT = 25
 MAX_SERVICE_BUTTONS = 30
+SMM_CACHE_TTL = 120  # 2 minutes
+
+_smm_services_cache = None
+_smm_services_cache_expires_at = 0.0
 
 NETWORKS_DATA = [
     {
@@ -438,9 +443,23 @@ def _prepare_service_card(raw_service, usd_rate, markup_percent):
     }
 
 
-async def _load_group_services(network_index, group_index):
+async def _get_raw_services_cached():
+    global _smm_services_cache, _smm_services_cache_expires_at
+    now = time.monotonic()
+    if _smm_services_cache is not None and now < _smm_services_cache_expires_at:
+        return _smm_services_cache
+
     raw_services = await smm_client.get_services(apply_markup=False)
-    if not isinstance(raw_services, list):
+    if isinstance(raw_services, list):
+        _smm_services_cache = raw_services
+        _smm_services_cache_expires_at = now + SMM_CACHE_TTL
+        return raw_services
+    return _smm_services_cache if _smm_services_cache is not None else None
+
+
+async def _load_group_services(network_index, group_index):
+    raw_services = await _get_raw_services_cached()
+    if raw_services is None:
         return None
 
     usd_rate, markup_percent = await _get_runtime_pricing()
@@ -666,159 +685,172 @@ async def service_quantity_handler(message: types.Message, state: FSMContext):
     )
 
 
-@router.callback_query(OrderState.waiting_for_confirmation, F.data == "svc_confirm")
+@router.callback_query(F.data == "svc_confirm")
 async def service_confirm_callback(call: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    required_keys = {
-        "service_id",
-        "service_name",
-        "order_link",
-        "order_quantity",
-        "price_per_1000",
-        "total_price",
-        "selected_network_index",
-        "selected_group_index",
-    }
-    if not required_keys.issubset(data):
-        await state.clear()
-        await call.message.edit_text("❌ Buyurtma ma'lumotlari topilmadi. Qaytadan urinib ko'ring.")
-        await call.answer()
-        return
-
-    network_index = int(data["selected_network_index"])
-    group_index = int(data["selected_group_index"])
-    service_id = str(data["service_id"])
-    order_quantity = int(data["order_quantity"])
-    order_link = str(data["order_link"]).strip()
-
-    current_service, all_group_services = await _find_group_service(network_index, group_index, service_id)
-    if all_group_services is None:
-        await call.answer("Xizmat ma'lumotlarini tekshirib bo'lmadi.", show_alert=True)
-        return
-    if not current_service:
-        await state.clear()
-        await call.message.edit_text(
-            "❌ Tanlangan xizmat API ichida topilmadi yoki o'zgargan.",
-            reply_markup=user_flow_keyboard(),
-        )
-        await call.answer()
-        return
-
-    min_order = int(current_service["min_order"] or 0)
-    max_order = int(current_service["max_order"] or 0)
-    if min_order and order_quantity < min_order or max_order and order_quantity > max_order:
-        await state.clear()
-        await call.message.edit_text(
-            "❌ Xizmat limiti yangilanib ketgan. Iltimos, qaytadan tanlang.",
-            reply_markup=user_flow_keyboard(),
-        )
-        await call.answer()
-        return
-
-    current_price = int(current_service["price_per_1000"])
-    current_total = calculate_quantity_price_uzs(current_price, order_quantity)
-    if current_price != int(data["price_per_1000"]) or current_total != int(data["total_price"]):
-        await state.update_data(
-            service_name=current_service["name"],
-            price_per_1000=current_price,
-            total_price=current_total,
-            min_order=min_order,
-            max_order=max_order,
-        )
-        await call.message.edit_text(
-            f"Narx yangilandi: <b>{current_price:,}</b> so'm / 1000\n"
-            f"Yangi jami: <b>{current_total:,}</b> so'm\n\n"
-            "Davom ettirish uchun yana `Tasdiqlash` tugmasini bosing.",
-            reply_markup=confirmation_keyboard(),
-        )
-        await call.answer("Narx yangilandi.", show_alert=True)
-        return
-
-    if network_index is not None and _is_instagram_network(network_index) and not is_instagram_link(order_link):
-        await state.clear()
-        await call.message.edit_text(
-            "❌ Instagram havolasi yaroqsiz bo'lib qoldi. Qaytadan buyurtma bering.",
-            reply_markup=user_flow_keyboard(),
-        )
-        await call.answer()
-        return
-
-    confirm_token = str(data.get("confirm_token", "")).strip()
-    if not confirm_token or not await db.claim_action_lock(f"smm:{confirm_token}"):
-        await call.answer("Bu buyurtma allaqachon qayta ishlanmoqda.", show_alert=True)
-        return
-
-    user = await db.get_user(call.from_user.id)
-    balance = user["balance"] if user else 0
-    if not user or balance < current_total:
-        await state.clear()
-        await call.message.edit_text(
-            "❌ Balans yetarli emas.\n\n"
-            f"Kerakli summa: <b>{current_total:,}</b> so'm\n"
-            f"Sizning balans: <b>{balance:,.0f}</b> so'm",
-            reply_markup=user_flow_keyboard(),
-        )
-        await call.answer()
-        return
-
-    spent = await db.spend_balance(
-        call.from_user.id,
-        current_total,
-        method="SMM Purchase",
-        tx_type="purchase",
-        reference=f"svc:{service_id}:{order_quantity}",
-    )
-    if not spent:
-        await call.message.edit_text(
-            "⚠️ Balans o'zgargan. Qaytadan urinib ko'ring.",
-            reply_markup=user_flow_keyboard(),
-        )
-        await call.answer()
-        return
-
     try:
-        external_order_id = await smm_client.add_order(
-            service_id=service_id,
-            link=order_link,
-            quantity=order_quantity,
-        )
-    except Exception as exc:  # pragma: no cover - network safety
-        logging.error("Dynamic SMM order failed: %s", exc)
-        external_order_id = None
+        data = await state.get_data()
+        required_keys = {
+            "service_id",
+            "service_name",
+            "order_link",
+            "order_quantity",
+            "price_per_1000",
+            "total_price",
+            "selected_network_index",
+            "selected_group_index",
+        }
+        if not required_keys.issubset(data):
+            await state.clear()
+            await call.message.edit_text("❌ Buyurtma ma'lumotlari topilmadi. Qaytadan urinib ko'ring.")
+            await call.answer()
+            return
 
-    if not external_order_id:
-        await db.refund_balance(
+        network_index = int(data["selected_network_index"])
+        group_index = int(data["selected_group_index"])
+        service_id = str(data["service_id"])
+        order_quantity = int(data["order_quantity"])
+        order_link = str(data["order_link"]).strip()
+
+        current_service, all_group_services = await _find_group_service(network_index, group_index, service_id)
+        if all_group_services is None:
+            await call.answer("Xizmat ma'lumotlarini tekshirib bo'lmadi.", show_alert=True)
+            return
+        if not current_service:
+            await state.clear()
+            await call.message.edit_text(
+                "❌ Tanlangan xizmat API ichida topilmadi yoki o'zgargan.",
+                reply_markup=user_flow_keyboard(),
+            )
+            await call.answer()
+            return
+
+        min_order = int(current_service["min_order"] or 0)
+        max_order = int(current_service["max_order"] or 0)
+        if (min_order and order_quantity < min_order) or (max_order and order_quantity > max_order):
+            await state.clear()
+            await call.message.edit_text(
+                "❌ Xizmat limiti yangilanib ketgan. Iltimos, qaytadan tanlang.",
+                reply_markup=user_flow_keyboard(),
+            )
+            await call.answer()
+            return
+
+        current_price = int(current_service["price_per_1000"])
+        current_total = calculate_quantity_price_uzs(current_price, order_quantity)
+        if current_price != int(data["price_per_1000"]) or current_total != int(data["total_price"]):
+            await state.update_data(
+                service_name=current_service["name"],
+                price_per_1000=current_price,
+                total_price=current_total,
+                min_order=min_order,
+                max_order=max_order,
+            )
+            await call.message.edit_text(
+                f"Narx yangilandi: <b>{current_price:,}</b> so'm / 1000\n"
+                f"Yangi jami: <b>{current_total:,}</b> so'm\n\n"
+                "Davom ettirish uchun yana `Tasdiqlash` tugmasini bosing.",
+                reply_markup=confirmation_keyboard(),
+            )
+            await call.answer("Narx yangilandi.", show_alert=True)
+            return
+
+        if network_index is not None and _is_instagram_network(network_index) and not is_instagram_link(order_link):
+            await state.clear()
+            await call.message.edit_text(
+                "❌ Instagram havolasi yaroqsiz bo'lib qoldi. Qaytadan buyurtma bering.",
+                reply_markup=user_flow_keyboard(),
+            )
+            await call.answer()
+            return
+
+        confirm_token = str(data.get("confirm_token", "")).strip()
+        if not confirm_token or not await db.claim_action_lock(f"smm:{confirm_token}"):
+            await call.answer("Bu buyurtma allaqachon qayta ishlanmoqda.", show_alert=True)
+            return
+
+        user = await db.get_user(call.from_user.id)
+        balance = user["balance"] if user else 0
+        if not user or balance < current_total:
+            await state.clear()
+            await call.message.edit_text(
+                "❌ Balans yetarli emas.\n\n"
+                f"Kerakli summa: <b>{current_total:,}</b> so'm\n"
+                f"Sizning balans: <b>{balance:,.0f}</b> so'm",
+                reply_markup=user_flow_keyboard(),
+            )
+            await call.answer()
+            return
+
+        spent = await db.spend_balance(
             call.from_user.id,
             current_total,
-            method="SMM Refund",
-            tx_type="refund",
+            method="SMM Purchase",
+            tx_type="purchase",
             reference=f"svc:{service_id}:{order_quantity}",
         )
+        if not spent:
+            await call.message.edit_text(
+                "⚠️ Balans o'zgargan. Qaytadan urinib ko'ring.",
+                reply_markup=user_flow_keyboard(),
+            )
+            await call.answer()
+            return
+
+        try:
+            external_order_id = await smm_client.add_order(
+                service_id=service_id,
+                link=order_link,
+                quantity=order_quantity,
+            )
+        except Exception as exc:  # pragma: no cover - network safety
+            logging.error("Dynamic SMM order failed: %s", exc)
+            external_order_id = None
+
+        if not external_order_id:
+            await db.refund_balance(
+                call.from_user.id,
+                current_total,
+                method="SMM Refund",
+                tx_type="refund",
+                reference=f"svc:{service_id}:{order_quantity}",
+            )
+            await state.clear()
+            await call.message.edit_text(
+                "⚠️ Buyurtma panelga yuborilmadi. Pul balansga qaytarildi.",
+                reply_markup=user_flow_keyboard(),
+            )
+            await call.answer()
+            return
+
+        local_order_id = await db.add_order(
+            user_id=call.from_user.id,
+            service_type="SMM",
+            service_name=current_service["name"],
+            target=order_link,
+            amount=current_total,
+            external_id=str(external_order_id),
+        )
+
         await state.clear()
         await call.message.edit_text(
-            "⚠️ Buyurtma panelga yuborilmadi. Pul balansga qaytarildi.",
+            "✅ Buyurtma qabul qilindi.\n\n"
+            f"🧾 Lokal ID: <code>{local_order_id}</code>\n"
+            f"🌐 Panel ID: <code>{external_order_id}</code>\n"
+            f"📊 Xizmat: <b>{escape(current_service['name'])}</b>\n"
+            f"🔢 Miqdor: <b>{order_quantity:,}</b>\n"
+            f"💰 Narx: <b>{current_total:,}</b> so'm",
             reply_markup=user_flow_keyboard(),
         )
         await call.answer()
         return
-
-    local_order_id = await db.add_order(
-        user_id=call.from_user.id,
-        service_type="SMM",
-        service_name=current_service["name"],
-        target=order_link,
-        amount=current_total,
-        external_id=str(external_order_id),
-    )
-
-    await state.clear()
-    await call.message.edit_text(
-        "✅ Buyurtma qabul qilindi.\n\n"
-        f"🧾 Lokal ID: <code>{local_order_id}</code>\n"
-        f"🌐 Panel ID: <code>{external_order_id}</code>\n"
-        f"📊 Xizmat: <b>{escape(current_service['name'])}</b>\n"
-        f"🔢 Miqdor: <b>{order_quantity:,}</b>\n"
-        f"💰 Narx: <b>{current_total:,}</b> so'm",
-        reply_markup=user_flow_keyboard(),
-    )
-    await call.answer()
+    except Exception as exc:
+        logging.exception("Unexpected error in service_confirm_callback")
+        await state.clear()
+        try:
+            await call.message.edit_text(
+                "❌ Buyurtma bajarishda ichki xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.",
+                reply_markup=user_flow_keyboard(),
+            )
+        except Exception:
+            pass
+        await call.answer("Xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.", show_alert=True)

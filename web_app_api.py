@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from auth_validator import validate_telegram_data
 from config import WEB_APP_ALLOWED_ORIGINS
 from database.models import db, init_db
+from utils.api_client import smm_client
 from utils.service_catalog import calculate_quantity_price_uzs
 
 app = FastAPI(title="SMM Bot Mini App API")
@@ -148,7 +149,39 @@ async def create_smm_order(request: Request, authorization: str = Header(None)):
     if not balance_spent:
         raise HTTPException(status_code=402, detail="Insufficient balance or balance changed")
 
-    order_id = f"MA_{service_id}_{user_id}_{int(time.time())}"
-    await db.add_order(user_id, "SMM", service["name"], link, final_price, order_id)
+    try:
+        external_order_id = await smm_client.add_order(
+            service_id=service_id,
+            link=link,
+            quantity=quantity,
+        )
+    except Exception as exc:
+        logger.error("WebApp SMM order failed: %s", exc)
+        external_order_id = None
 
-    return {"status": "success", "order_id": order_id, "price": final_price, "final_price": final_price}
+    if not external_order_id:
+        await db.refund_balance(
+            user_id,
+            final_price,
+            method="SMM Refund",
+            tx_type="refund",
+            reference=f"miniapp:smm:{service_id}:{quantity}",
+        )
+        raise HTTPException(status_code=500, detail="Order could not be sent to provider. Balance refunded.")
+
+    local_order_id = await db.add_order(
+        user_id,
+        "SMM",
+        service["name"],
+        link,
+        final_price,
+        str(external_order_id)
+    )
+
+    return {
+        "status": "success",
+        "order_id": str(external_order_id),
+        "local_id": local_order_id,
+        "price": final_price,
+        "final_price": final_price
+    }

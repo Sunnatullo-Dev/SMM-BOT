@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import aiosqlite
 
@@ -97,6 +99,14 @@ DEFAULT_PAYMENT_METHODS = (
     },
 )
 
+PAYMENT_METHOD_LABELS = {
+    "payme": "🅿️ PAYME [ Avto ]",
+    "all_apps_auto": "☑️ Barcha ilova [ Avto ]",
+    "humo_uzcard_auto": "🔶 Humo | Uzcard [ Avto ]",
+    "click": "🔵 CLICK [ Avto ]",
+    "admin_support": "☎️ Adminga murojaat",
+}
+
 
 SERVICE_COLUMNS = {
     "platform_key": "TEXT DEFAULT ''",
@@ -131,6 +141,50 @@ def _coerce_money(value):
         return 0
 
 
+def _normalize_sms_api_price_to_uzs(api_price, usd_rate):
+    try:
+        price_value = float(api_price or 0)
+    except (TypeError, ValueError):
+        return 0
+    try:
+        usd_rate_value = float(usd_rate or USD_RATE)
+    except (TypeError, ValueError):
+        usd_rate_value = float(USD_RATE)
+
+    if price_value <= 0:
+        return 0
+
+    # locksmm.uz countries endpoint currently returns fractional values; treat them as USD-like
+    # and convert to so'm. Large values are assumed to already be in so'm.
+    if price_value < 100:
+        return _coerce_money(price_value * usd_rate_value)
+    return _coerce_money(price_value)
+
+
+APP_TIMEZONE = ZoneInfo("Asia/Tashkent")
+
+
+def _to_utc_sql(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _today_bounds_sql() -> tuple[str, str]:
+    now_local = datetime.now(APP_TIMEZONE)
+    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local = start_local + timedelta(days=1)
+    return _to_utc_sql(start_local), _to_utc_sql(end_local)
+
+
+def _month_bounds_sql() -> tuple[str, str]:
+    now_local = datetime.now(APP_TIMEZONE)
+    start_local = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if start_local.month == 12:
+        end_local = start_local.replace(year=start_local.year + 1, month=1)
+    else:
+        end_local = start_local.replace(month=start_local.month + 1)
+    return _to_utc_sql(start_local), _to_utc_sql(end_local)
+
+
 class Database:
     def __init__(self, db_path):
         self.db_path = db_path
@@ -162,10 +216,19 @@ class Database:
                     referrer_id INTEGER DEFAULT 0,
                     phone_number TEXT DEFAULT 'No',
                     registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     is_blocked INTEGER DEFAULT 0
                 )
                 """
             )
+
+            async with db.execute("PRAGMA table_info(users)") as cursor:
+                columns = await cursor.fetchall()
+            if not any(column["name"] == "last_seen" for column in columns):
+                await db.execute("ALTER TABLE users ADD COLUMN last_seen TIMESTAMP")
+                await db.execute(
+                    "UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE last_seen IS NULL"
+                )
 
             await db.execute(
                 """
@@ -325,13 +388,14 @@ class Database:
                 )
 
             await self._ensure_default_payment_methods(db)
-            await db.execute(
-                """
-                INSERT OR IGNORE INTO payment_wallets (label, holder_name, wallet_number, is_active, sort_order)
-                VALUES (?, ?, ?, 1, 0)
-                """,
-                ("Asosiy karta", CARD_HOLDER, CARD_NUMBER),
-            )
+            if CARD_NUMBER.strip():
+                await db.execute(
+                    """
+                    INSERT OR IGNORE INTO payment_wallets (label, holder_name, wallet_number, is_active, sort_order)
+                    VALUES (?, ?, ?, 1, 0)
+                    """,
+                    ("💳 Uzcard / Humo", CARD_HOLDER, CARD_NUMBER),
+                )
 
             await db.commit()
 
@@ -359,6 +423,7 @@ class Database:
         )
 
         for method in DEFAULT_PAYMENT_METHODS:
+            method_name = PAYMENT_METHOD_LABELS.get(method["callback_data"], method["name"])
             await db.execute(
                 """
                 INSERT INTO payment_methods (name, callback_data, instruction, is_active)
@@ -368,7 +433,7 @@ class Database:
                     instruction = excluded.instruction
                 """,
                 (
-                    method["name"],
+                    method_name,
                     method["callback_data"],
                     method["instruction"],
                 ),
@@ -970,22 +1035,47 @@ class Database:
             return override_price
 
         markup_raw = await self.get_setting("sms_markup_percent", "0")
+        usd_rate_raw = await self.get_setting("usd_rate", USD_RATE)
         try:
             markup_percent = float(markup_raw)
         except (TypeError, ValueError):
             markup_percent = 0.0
-        return _coerce_money(float(api_price or 0) * (1 + markup_percent / 100))
+        base_price = _normalize_sms_api_price_to_uzs(api_price, usd_rate_raw)
+        return _coerce_money(base_price * (1 + markup_percent / 100))
 
     # --- USER OPERATIONS ---
-    async def add_user(self, user_id, username, full_name, referrer_id=0):
+    async def add_user(self, user_id, username, full_name, referrer_id=0, last_seen=None):
         async with self.connect() as db:
-            await db.execute(
-                """
-                INSERT OR IGNORE INTO users (user_id, username, full_name, referrer_id)
-                VALUES (?, ?, ?, ?)
-                """,
-                (user_id, username, full_name, referrer_id),
-            )
+            if last_seen is None:
+                await db.execute(
+                    """
+                    INSERT OR IGNORE INTO users (user_id, username, full_name, referrer_id, last_seen)
+                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (user_id, username, full_name, referrer_id),
+                )
+            else:
+                await db.execute(
+                    """
+                    INSERT OR IGNORE INTO users (user_id, username, full_name, referrer_id, last_seen)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (user_id, username, full_name, referrer_id, last_seen),
+                )
+            await db.commit()
+
+    async def update_user_last_seen(self, user_id, last_seen=None):
+        async with self.connect() as db:
+            if last_seen is None:
+                await db.execute(
+                    "UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE user_id = ?",
+                    (user_id,),
+                )
+            else:
+                await db.execute(
+                    "UPDATE users SET last_seen = ? WHERE user_id = ?",
+                    (last_seen, user_id),
+                )
             await db.commit()
 
     async def get_user(self, user_id):
@@ -1020,6 +1110,15 @@ class Database:
     async def get_all_user_ids(self):
         async with self.connect() as db:
             async with db.execute("SELECT user_id FROM users ORDER BY id ASC") as cursor:
+                rows = await cursor.fetchall()
+        return [row["user_id"] for row in rows]
+
+    async def get_recent_user_ids(self, days: int):
+        async with self.connect() as db:
+            async with db.execute(
+                "SELECT user_id FROM users WHERE registered_at >= datetime('now', ?)",
+                (f'-{days} days',),
+            ) as cursor:
                 rows = await cursor.fetchall()
         return [row["user_id"] for row in rows]
 
@@ -1461,6 +1560,9 @@ class Database:
             async with db.execute("SELECT * FROM orders WHERE id = ?", (order_id,)) as cursor:
                 return await cursor.fetchone()
 
+    async def get_order_by_id(self, order_id):
+        return await self.get_order(order_id)
+
     async def get_user_stats(self, user_id):
         async with self.connect() as db:
             async with db.execute("SELECT COUNT(*) AS cnt FROM orders WHERE user_id = ?", (user_id,)) as cursor:
@@ -1634,13 +1736,21 @@ class Database:
 
     async def get_admin_stats(self):
         async with self.connect() as db:
+            today_start, today_end = _today_bounds_sql()
+            month_start, month_end = _month_bounds_sql()
             async with db.execute("SELECT COUNT(*) AS cnt FROM users") as cursor:
                 total_users = (await cursor.fetchone())["cnt"]
-            async with db.execute("SELECT COUNT(*) AS cnt FROM users WHERE date(registered_at) = date('now')") as cursor:
+            async with db.execute(
+                "SELECT COUNT(*) AS cnt FROM users WHERE registered_at >= ? AND registered_at < ?",
+                (today_start, today_end),
+            ) as cursor:
                 today_users = (await cursor.fetchone())["cnt"]
             async with db.execute("SELECT COUNT(*) AS cnt FROM orders") as cursor:
                 total_orders = (await cursor.fetchone())["cnt"]
-            async with db.execute("SELECT COUNT(*) AS cnt FROM orders WHERE date(created_at) = date('now')") as cursor:
+            async with db.execute(
+                "SELECT COUNT(*) AS cnt FROM orders WHERE created_at >= ? AND created_at < ?",
+                (today_start, today_end),
+            ) as cursor:
                 today_orders = (await cursor.fetchone())["cnt"]
             async with db.execute("SELECT COUNT(*) AS cnt FROM orders WHERE status = 'processing'") as cursor:
                 processing_orders = (await cursor.fetchone())["cnt"]
@@ -1655,11 +1765,13 @@ class Database:
             total_income = await self._sum_turnover(db)
             monthly_income = await self._sum_turnover(
                 db,
-                "AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')",
+                "AND created_at >= ? AND created_at < ?",
+                (month_start, month_end),
             )
             today_sales = await self._sum_turnover(
                 db,
-                "AND date(created_at) = date('now')",
+                "AND created_at >= ? AND created_at < ?",
+                (today_start, today_end),
             )
             async with db.execute("SELECT COALESCE(SUM(balance), 0) AS total FROM users") as cursor:
                 total_user_balances = int((await cursor.fetchone())["total"] or 0)
@@ -1698,9 +1810,11 @@ class Database:
     async def get_daily_income(self):
         """Bugungi kunlik netto aylanma: purchase debetlari minus refundlar"""
         async with self.connect() as db:
+            today_start, today_end = _today_bounds_sql()
             return await self._sum_turnover(
                 db,
-                "AND date(created_at) = date('now')",
+                "AND created_at >= ? AND created_at < ?",
+                (today_start, today_end),
             )
 
     async def get_total_users_balance(self):
@@ -1760,6 +1874,14 @@ class Database:
             await db.execute("DELETE FROM referral_rewards")
             await db.commit()
             return cursor.rowcount
+
+    async def set_user_block_status(self, user_id, is_blocked):
+        async with self.connect() as db:
+            await db.execute(
+                "UPDATE users SET is_blocked = ? WHERE user_id = ?",
+                (1 if int(is_blocked) else 0, int(user_id)),
+            )
+            await db.commit()
 
     async def count_orders_by_status(self, status):
         """Holatli buyurtmalarni sanash"""

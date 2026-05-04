@@ -68,7 +68,7 @@ async def render_smm_main(target):
 
     text = (
         "⚡️ <b>TEZKOR NAKRUTKA</b>\n\n"
-        "✨ <i>Ijtimoiy tarmoqlaringizni yangi bosqichga olib chiqing!</i>\n\n"
+        "✨ <i>Ijtimoiy tarmoqlaringizni yangi bosqichga olib chiqing.</i>\n\n"
         "📌 <b>Katalog haqida:</b>\n"
         "• Xizmatlar Locksmm API orqali amalga oshiriladi\n"
         "• Narxlar real vaqtda so'mda ko'rsatiladi\n"
@@ -91,9 +91,9 @@ async def render_group_list(target, platform_key):
     )
     if platform_key == "instagram":
         text = (
-            f"рџ“‚ <b>{platform_title} xizmatlari</b>\n\n"
-            "рџ“ё <i>API ichidan faqat Instagram xizmatlari ajratib ko'rsatilmoqda.</i>\n\n"
-            "рџ‘‡ <b>Kerakli bo'limni tanlang:</b>"
+            f"📂 <b>{platform_title} xizmatlari</b>\n\n"
+            "📸 <i>API ichidan faqat Instagram xizmatlari ajratib ko'rsatilmoqda.</i>\n\n"
+            "👇 <b>Kerakli bo'limni tanlang:</b>"
         )
     await _send_or_edit(target, text, groups_keyboard(platform_key, groups))
 
@@ -227,7 +227,6 @@ async def smm_link_handler(message: types.Message, state: FSMContext):
     data = await state.get_data()
     back_callback = f"smm_grp_{data.get('group_key', '')}" if data.get("group_key") else None
     if not link.startswith("http"):
-        data = await state.get_data()
         return await message.answer(
             "⚠️ To'g'ri link yuboring. Link `http` yoki `https` bilan boshlansin.",
             reply_markup=user_flow_keyboard(
@@ -237,16 +236,16 @@ async def smm_link_handler(message: types.Message, state: FSMContext):
             ),
         )
 
-    data = await state.get_data()
     if data.get("platform_key") == "instagram" and not is_instagram_link(link):
         return await message.answer(
             "Instagram xizmati uchun havola `instagram.com` domeniga tegishli bo'lishi kerak.",
             reply_markup=user_flow_keyboard(
                 back_callback=back_callback,
-                back_text="рџ”™ Xizmatlarga qaytish",
+                back_text="🔙 Xizmatlarga qaytish",
                 include_cancel=True,
             ),
         )
+
     min_order = int(data.get("min_order", 100) or 100)
     max_order = int(data.get("max_order", 50000) or 50000)
 

@@ -1,5 +1,5 @@
 from . import (
-    admin_handlers,
+    order_handlers,
     payment_handlers,
     provider_structure_handlers,
     referral,

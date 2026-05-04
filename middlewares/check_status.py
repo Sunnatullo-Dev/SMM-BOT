@@ -8,9 +8,32 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import ADMIN_LIST
 from database.models import db
-from keyboards.main_menu import main_menu_keyboard
 
 CHECK_SUB_CALLBACK = "force_sub_check"
+
+
+def _extract_referrer_id_from_start_text(text: str) -> int:
+    parts = str(text or "").split()
+    if len(parts) > 1 and parts[1].isdigit():
+        return int(parts[1])
+    return 0
+
+
+def _build_check_callback(referrer_id: int = 0) -> str:
+    referrer_id = int(referrer_id or 0)
+    return f"{CHECK_SUB_CALLBACK}:{referrer_id}" if referrer_id > 0 else CHECK_SUB_CALLBACK
+
+
+def _parse_check_callback(data: str) -> int:
+    raw = str(data or "").strip()
+    if raw == CHECK_SUB_CALLBACK:
+        return 0
+    prefix = f"{CHECK_SUB_CALLBACK}:"
+    if raw.startswith(prefix):
+        tail = raw[len(prefix) :].strip()
+        if tail.isdigit():
+            return int(tail)
+    return 0
 
 
 def _parse_required_channels(raw_value: str) -> list[dict]:
@@ -102,7 +125,7 @@ async def _get_missing_channels(bot, user_id: int) -> list[dict]:
     return missing
 
 
-def _required_channels_keyboard(missing_channels: list[dict]):
+def _required_channels_keyboard(missing_channels: list[dict], referrer_id: int = 0):
     builder = InlineKeyboardBuilder()
     for channel in missing_channels:
         url = channel.get("url")
@@ -117,7 +140,7 @@ def _required_channels_keyboard(missing_channels: list[dict]):
     builder.row(
         types.InlineKeyboardButton(
             text="✅ Tekshirish",
-            callback_data=CHECK_SUB_CALLBACK,
+            callback_data=_build_check_callback(referrer_id),
         )
     )
     return builder.as_markup()
@@ -141,9 +164,13 @@ def _required_channels_text(missing_channels: list[dict]) -> str:
     return "\n".join(lines)
 
 
-async def _send_subscription_prompt(event: types.Message | types.CallbackQuery, missing_channels: list[dict]):
+async def _send_subscription_prompt(
+    event: types.Message | types.CallbackQuery,
+    missing_channels: list[dict],
+    referrer_id: int = 0,
+):
     text = _required_channels_text(missing_channels)
-    markup = _required_channels_keyboard(missing_channels)
+    markup = _required_channels_keyboard(missing_channels, referrer_id)
 
     if isinstance(event, types.Message):
         await event.answer(text, reply_markup=markup)
@@ -156,12 +183,26 @@ async def _send_subscription_prompt(event: types.Message | types.CallbackQuery, 
         await event.message.answer(text, reply_markup=markup)
 
 
+async def _handle_successful_subscription(event: types.CallbackQuery, referrer_id: int):
+    from handlers.start_handlers import send_start_screen
+
+    await event.answer("Obuna tasdiqlandi.")
+    try:
+        await event.message.edit_text(
+            "✅ Siz kanallarga obuna bo'ldingiz.\n\nEndi hohlagan tugmani tanlang.",
+            reply_markup=None,
+        )
+    except Exception:
+        pass
+    await send_start_screen(event.message, referrer_id=referrer_id, actor=event.from_user)
+
+
 class CheckStatusMiddleware(BaseMiddleware):
     async def __call__(
         self,
         handler: Callable[[Any, Dict[str, Any]], Awaitable[Any]],
         event: Any,
-        data: Dict[str, Any]
+        data: Dict[str, Any],
     ) -> Any:
         if isinstance(event, (types.Message, types.CallbackQuery)):
             user_id = event.from_user.id
@@ -194,20 +235,19 @@ class CheckStatusMiddleware(BaseMiddleware):
             if user_id not in ADMIN_LIST:
                 missing_channels = await _get_missing_channels(event.bot, user_id)
 
-                if isinstance(event, types.CallbackQuery) and event.data == CHECK_SUB_CALLBACK:
+                if isinstance(event, types.CallbackQuery) and str(event.data or "").startswith(CHECK_SUB_CALLBACK):
+                    referrer_id = _parse_check_callback(event.data)
                     if missing_channels:
-                        await _send_subscription_prompt(event, missing_channels)
+                        await _send_subscription_prompt(event, missing_channels, referrer_id)
                         return
-                    await event.answer("✅ Obuna tasdiqlandi.", show_alert=True)
-                    try:
-                        await event.message.edit_text("✅ Obuna tasdiqlandi. Endi botdan foydalanishingiz mumkin.")
-                    except Exception:
-                        pass
-                    await event.message.answer("Asosiy sahifa.", reply_markup=main_menu_keyboard())
+                    await _handle_successful_subscription(event, referrer_id)
                     return
 
                 if missing_channels:
-                    await _send_subscription_prompt(event, missing_channels)
+                    referrer_id = 0
+                    if isinstance(event, types.Message) and (event.text or "").startswith("/start"):
+                        referrer_id = _extract_referrer_id_from_start_text(event.text or "")
+                    await _send_subscription_prompt(event, missing_channels, referrer_id)
                     return
 
         return await handler(event, data)

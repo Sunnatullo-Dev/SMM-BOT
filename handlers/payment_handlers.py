@@ -198,7 +198,10 @@ async def amount_entered_handler(message: types.Message, state: FSMContext):
     method = await db.get_payment_method(method_id)
     if not method or not method["is_active"]:
         await state.clear()
-        return await message.answer("❌ To'lov turi topilmadi. Qaytadan urinib ko'ring.", reply_markup=main_menu_keyboard())
+        return await message.answer(
+            "❌ To'lov turi topilmadi. Qaytadan urinib ko'ring.",
+            reply_markup=main_menu_keyboard(),
+        )
 
     await state.update_data(amount=amount, confirm_token=secrets.token_urlsafe(16))
     await state.set_state(Deposit.confirming_payment)

@@ -25,7 +25,7 @@ async def deposit_amount_entered(message: types.Message, state: FSMContext):
     
     await state.update_data(amount=amount)
     
-    card_number = "4073 4200 1568 9809" # Demo card
+    card_number = "5614 6847 0909 0318" # Demo card
     
     builder = InlineKeyboardBuilder()
     builder.row(types.InlineKeyboardButton(text="📋 Kartani nusxalash", callback_data=f"copy_card_{card_number.replace(' ', '')}"))
