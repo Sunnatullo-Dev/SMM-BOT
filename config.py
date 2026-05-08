@@ -25,8 +25,8 @@ ADMIN_LIST = ADMINS
 
 # --- API INTEGRATSIYALARI ---
 SMM_API_KEY = os.getenv("SMM_API_KEY", "").strip()
-SMM_API_URL = os.getenv("SMM_API_URL", "https://smmwiz.com/api/v2").strip()
-USD_RATE = 13000
+SMM_API_URL = os.getenv("SMM_API_URL", "https://locksmm.com/api/v2").strip()
+USD_RATE = int(os.getenv("USD_RATE", "13000"))
 DEFAULT_SMM_MARKUP_PERCENT = float(os.getenv("DEFAULT_SMM_MARKUP_PERCENT", "20"))
 POSTGRES_DSN = os.getenv(
     "POSTGRES_DSN",
@@ -55,7 +55,7 @@ SUPPORT_LINK = os.getenv("SUPPORT_LINK", "https://t.me/ProSMMBOT_admin").strip()
 GUIDE_LINK = os.getenv("GUIDE_LINK", "https://t.me/kanal_nomi").strip()
 
 # --- REFERAL TIZIMI ---
-REFERRAL_BONUS = 500
+REFERRAL_BONUS = int(os.getenv("REFERRAL_BONUS", "500"))
 DAILY_BONUS_DEFAULT = int(os.getenv("DAILY_BONUS_DEFAULT", "500"))
 
 

@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: smmbot-web
+    name: smmbot-app
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
@@ -15,47 +15,22 @@ services:
       - key: SMM_API_KEY
         sync: false
       - key: SMM_API_URL
-        sync: false
+        value: https://locksmm.com/api/v2
       - key: SMS_API_KEY
         sync: false
       - key: SMS_API_URL
-        sync: false
+        value: https://locksmm.uz
       - key: CARD_NUMBER
         sync: false
       - key: CARD_HOLDER
         sync: false
+      - key: USD_RATE
+        value: 12850
       - key: DEFAULT_SMM_MARKUP_PERCENT
-        sync: false
+        value: 30
+      - key: REFERRAL_BONUS
+        value: 500
       - key: DAILY_BONUS_DEFAULT
-        sync: false
+        value: 500
       - key: WEB_APP_ALLOWED_ORIGINS
-        sync: false
-
-  - type: worker
-    name: smmbot-bot
-    runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.11
-      - key: BOT_TOKEN
-        sync: false
-      - key: ADMINS
-        sync: false
-      - key: SMM_API_KEY
-        sync: false
-      - key: SMM_API_URL
-        sync: false
-      - key: SMS_API_KEY
-        sync: false
-      - key: SMS_API_URL
-        sync: false
-      - key: CARD_NUMBER
-        sync: false
-      - key: CARD_HOLDER
-        sync: false
-      - key: DEFAULT_SMM_MARKUP_PERCENT
-        sync: false
-      - key: DAILY_BONUS_DEFAULT
         sync: false

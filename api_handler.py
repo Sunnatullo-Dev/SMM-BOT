@@ -13,7 +13,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 logger = logging.getLogger(__name__)
 
 SMMWIZ_API_KEY = os.getenv("SMMWIZ_API_KEY") or os.getenv("SMM_API_KEY", "")
-SMMWIZ_API_URL = os.getenv("SMMWIZ_API_URL") or os.getenv("SMM_API_URL", "https://smmwiz.com/api/v2")
+SMMWIZ_API_URL = os.getenv("SMMWIZ_API_URL") or os.getenv("SMM_API_URL", "https://locksmm.com/api/v2")
 MARKUP_PERCENT = Decimal("25")
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
 

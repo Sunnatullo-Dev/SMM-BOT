@@ -1,224 +1,89 @@
 # Server Deploy
 
-Bot hozir 2 ta alohida process bilan ishlaydi:
+Hozirgi production tavsiya qilingan variant:
 
-- `bot.py` — Telegram polling bot
-- `web_app_api.py` — FastAPI mini app backend
+- `main.py` bitta `web` service ichida ishlaydi
+- shu process ichida `FastAPI` ham, `Telegram polling` ham yuradi
+- SQLite bitta process ichida qoladi, shuning uchun `web` va `worker` orasida baza bo'linib ketmaydi
 
-## 1. Tayyorlash
+## 1. Muhim env qiymatlar
 
-```bash
-sudo apt update
-sudo apt install -y python3 python3-venv python3-pip
-```
-
-```bash
-cd /opt
-sudo mkdir -p smmbot
-sudo chown $USER:$USER smmbot
-cd smmbot
-```
-
-Loyiha fayllarini shu papkaga joylang, keyin:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-## 2. `.env` tayyorlash
-
-`.env.example` ni `.env` qilib nusxalang:
-
-```bash
-cp .env.example .env
-```
-
-Majburiy qiymatlar:
+Majburiy:
 
 - `BOT_TOKEN`
 - `ADMINS`
 - `SMM_API_KEY`
+- `SMM_API_URL=https://locksmm.com/api/v2`
 - `SMS_API_KEY`
+- `SMS_API_URL=https://locksmm.uz`
 - `CARD_NUMBER`
 - `CARD_HOLDER`
-- `WEB_APP_ALLOWED_ORIGINS`
+- `USD_RATE=12850`
+- `DEFAULT_SMM_MARKUP_PERCENT=30`
+- `REFERRAL_BONUS=500`
+- `DAILY_BONUS_DEFAULT=500`
 
-## 3. Lokal smoke test
+Mini App ishlatsa:
+
+- `WEB_APP_ALLOWED_ORIGINS=https://sizning-domeningiz`
+
+## 2. Render
+
+Render uchun [render.yaml](C:/Users/Ucer/Desktop/SMMBOT/render.yaml) ichida bitta service tayyor:
+
+- type: `web`
+- start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+- healthcheck: `/healthz`
+
+Deploydan keyin:
+
+1. Render dashboardda env variablelarni kiriting
+2. `Manual Deploy` yoki `Redeploy` qiling
+3. `/healthz` `200` qaytarayotganini tekshiring
+
+## 3. Railway
+
+Railway'da ham bitta service yetadi:
+
+- Start Command:
 
 ```bash
-source .venv/bin/activate
+uvicorn main:app --host 0.0.0.0 --port $PORT
+```
+
+- Healthcheck Path:
+
+```text
+/healthz
+```
+
+`Root Directory` bo'sh qolishi kerak.
+
+## 4. Lokal smoke test
+
+```bash
 python -m compileall .
-python -c "import bot; import web_app_api; print('imports ok')"
 python deploy_check.py
 ```
 
-## 4. Qo'lda ishga tushirish
+## 5. Nega bitta service
 
-Bot:
+Avvalgi sxemada:
 
-```bash
-source .venv/bin/activate
-python bot.py
-```
+- `bot.py` alohida worker
+- `web_app_api.py` alohida web
 
-Web API:
+edi. Bu SQLite bilan xavfli, chunki:
 
-```bash
-source .venv/bin/activate
-uvicorn web_app_api:app --host 0.0.0.0 --port 8000
-```
+- env va baza state ikkala service'da ajralib ketadi
+- hosting platforma har service uchun alohida disk/instance berishi mumkin
+- admin paneldagi o'zgarishlar yoki `database.db` boshqa service'da ko'rinmay qolishi mumkin
 
-Healthcheck:
+Shu sabab SQLite bilan eng xavfsiz variant hozircha `single service`.
 
-```bash
-curl http://127.0.0.1:8000/healthz
-```
+## 6. Muhim eslatmalar
 
-## 5. systemd service
-
-### `/etc/systemd/system/smmbot-bot.service`
-
-```ini
-[Unit]
-Description=SMM Telegram Bot
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/smmbot
-Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/smmbot/.venv/bin/python /opt/smmbot/bot.py
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### `/etc/systemd/system/smmbot-web.service`
-
-```ini
-[Unit]
-Description=SMM Bot FastAPI
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/smmbot
-Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/smmbot/.venv/bin/uvicorn web_app_api:app --host 127.0.0.1 --port 8000
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Yoqish:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now smmbot-bot
-sudo systemctl enable --now smmbot-web
-```
-
-Loglar:
-
-```bash
-sudo journalctl -u smmbot-bot -f
-sudo journalctl -u smmbot-web -f
-```
-
-## 6. Nginx reverse proxy
-
-Mini App ishlatsa, `web_app_api` ni domen orqali oching. Masalan:
-
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-Keyin SSL qo'ying:
-
-```bash
-sudo apt install -y nginx certbot python3-certbot-nginx
-sudo certbot --nginx -d your-domain.com
-```
-
-## 7. Muhim eslatmalar
-
-- SQLite fayl endi loyiha ichida absolute path bilan ishlaydi, shuning uchun systemd `cwd` tufayli boshqa joyga baza ochilib ketmaydi.
-- SQLite connection `WAL` rejimida ishlaydi, bu `bot.py` va `web_app_api.py` bir paytning o'zida yozganda lock muammolarini kamaytiradi.
-- FastAPI startup paytida baza avtomatik init qilinadi.
-- `WEB_APP_ALLOWED_ORIGINS` ni albatta o'zingizning domeningizga qo'ying.
-- Polling va FastAPI alohida service bo'lgani uchun ikkalasini ham yoqish kerak.
-- FSM hozir `MemoryStorage` bilan ishlaydi. Shu sabab serverda faqat bitta bot process ishlating; bir nechta polling instance tavsiya etilmaydi.
-- To'lovlar hozir webhook bilan to'liq avtomatik tasdiqlanmaydi. Foydalanuvchi so'rov yuboradi, admin esa haqiqiy tushumni ko'rib tasdiqlaydi.
-
-## 8. Railway sozlamalari
-
-Railway'da bu loyihani **2 ta alohida service** qilib qo'ying:
-
-- `smmbot-bot` — Telegram polling uchun
-- `smmbot-web` — FastAPI mini app uchun
-
-### `smmbot-bot` service
-
-- `Root Directory`: bo'sh qoldiring yoki repo root
-- `Branch`: `main`
-- `Builder`: `Railpack / Nixpacks`
-- `Build Command`: bo'sh qoldiring
-- `Start Command`: `python bot.py`
-- `Healthcheck Path`: bo'sh qoldiring
-- `Public Networking`: o'chirilgan bo'lsin
-- `Restart Policy`: `ON FAILURE`
-- `Serverless`: o'chirilgan bo'lsin
-- `Replicas`: `1`
-
-### `smmbot-web` service
-
-- `Root Directory`: bo'sh qoldiring yoki repo root
-- `Branch`: `main`
-- `Builder`: `Railpack / Nixpacks`
-- `Build Command`: bo'sh qoldiring
-- `Start Command`: `uvicorn web_app_api:app --host 0.0.0.0 --port $PORT`
-- `Healthcheck Path`: `/healthz`
-- `Public Networking`: yoqilgan bo'lsin
-- `Domain`: yarating
-- `Restart Policy`: `ON FAILURE`
-- `Serverless`: o'chirilgan bo'lsin
-- `Replicas`: `1`
-
-### Railway Variables
-
-Har ikkala service'ga ham quyidagilarni kiriting:
-
-- `BOT_TOKEN`
-- `ADMINS`
-- `SMM_API_KEY`
-- `SMM_API_URL`
-- `SMS_API_KEY`
-- `SMS_API_URL`
-- `CARD_NUMBER`
-- `CARD_HOLDER`
-- `DEFAULT_SMM_MARKUP_PERCENT`
-- `DAILY_BONUS_DEFAULT`
-
-Faqat `smmbot-web` service'da qo'shimcha:
-
-- `WEB_APP_ALLOWED_ORIGINS=https://sizning-domainingiz.railway.app`
-
-Mini App uchun custom domain ishlatsangiz, `WEB_APP_ALLOWED_ORIGINS` ga aynan o'sha domenni yozing.
+- `MemoryStorage` ishlatilmoqda, shu sabab 1 ta instance bilan ishlating
+- `uvicorn --workers` ko'paytirmang
+- SQLite production uchun vaqtinchalik yechim; katta yuklama uchun keyin Postgresga o'tish kerak
+- `.env` va `database.db` gitga kirmaydi, serverda env qiymatlarini qo'lda kiritish kerak

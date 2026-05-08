@@ -7,7 +7,7 @@ from database.models import db
 
 SMM_KEY_PLACEHOLDERS = {"", "your_smm_api_key_here", "YOUR_SMM_PANEL_API_KEY"}
 SMMWIZ_ENV_KEY = os.getenv("SMMWIZ_API_KEY", "").strip()
-SMMWIZ_ENV_URL = (os.getenv("SMMWIZ_API_URL") or "https://smmwiz.com/api/v2").strip()
+SMMWIZ_ENV_URL = (os.getenv("SMMWIZ_API_URL") or os.getenv("SMM_API_URL") or "https://locksmm.com/api/v2").strip()
 LEGACY_SMM_URL = "https://locksmm.com/api/v2"
 SMS_URL_PLACEHOLDERS = {
     "",

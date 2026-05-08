@@ -4,6 +4,7 @@ import sys
 import httpx
 
 import bot
+import main
 import web_app_api
 from config import DB_NAME, WEB_APP_ALLOWED_ORIGINS, validate_runtime_config
 from database.models import db, init_db
@@ -33,6 +34,7 @@ async def main() -> int:
     print(f"SQLITE_BUSY_TIMEOUT: {busy_timeout}")
     print(f"HEALTHZ: {response.status_code} {response.text}")
     print(f"BOT_MODULE: {bot.__name__}")
+    print(f"MAIN_MODULE: {main.__name__}")
 
     if not WEB_APP_ALLOWED_ORIGINS:
         print("WARNING: WEB_APP_ALLOWED_ORIGINS is empty")
