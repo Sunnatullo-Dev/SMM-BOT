@@ -10,6 +10,15 @@ from utils.api_client import smm_client
 router = Router()
 logger = logging.getLogger(__name__)
 
+
+def _mask_secret(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "sozlanmagan"
+    if len(raw) <= 8:
+        return "*" * len(raw)
+    return f"{raw[:4]}***{raw[-2:]}"
+
 # Keyboardlar (admin_handlers.py dan ko'chirilgan)
 def stats_keyboard():
     builder = InlineKeyboardBuilder()
@@ -61,14 +70,24 @@ async def adm_set_bot_status(call: types.CallbackQuery):
 
 @router.callback_query(F.data == "adm_api", F.from_user.id.in_(ADMIN_LIST))
 async def adm_api_settings(call: types.CallbackQuery):
-    smm_url = await db.get_setting("smm_api_url", "sozlanmagan")
-    sms_url = await db.get_setting("sms_api_url", "sozlanmagan")
+    settings = await db.get_settings(["smm_api_url", "smm_api_key", "sms_api_url", "sms_api_key"])
     text = (
-        "🔑 <b>API sozlamalari</b>\n\n"
-        f"🌐 SMM URL: <code>{smm_url}</code>\n"
-        f"🌐 SMS URL: <code>{sms_url}</code>\n\n"
-        "Kalitlarni o'zgartirish uchun 'Ma'lumotlarni tahrirlash' bo'limiga o'ting."
+        "🔑 <b>API key</b>\n\n"
+        "🚀 <b>Nakrutka API</b>\n"
+        f"🌐 URL: <code>{settings.get('smm_api_url') or 'sozlanmagan'}</code>\n"
+        f"🔐 KEY: <code>{_mask_secret(settings.get('smm_api_key'))}</code>\n\n"
+        "📱 <b>Raqam API</b>\n"
+        f"🌐 URL: <code>{settings.get('sms_api_url') or 'sozlanmagan'}</code>\n"
+        f"🔐 KEY: <code>{_mask_secret(settings.get('sms_api_key'))}</code>"
     )
     builder = InlineKeyboardBuilder()
+    builder.row(
+        types.InlineKeyboardButton(text="🚀 SMM URL", callback_data="adm_edit_setting|smm_api_url|api"),
+        types.InlineKeyboardButton(text="🔐 SMM KEY", callback_data="adm_edit_setting|smm_api_key|api"),
+    )
+    builder.row(
+        types.InlineKeyboardButton(text="📱 SMS URL", callback_data="adm_edit_setting|sms_api_url|api"),
+        types.InlineKeyboardButton(text="🔐 SMS KEY", callback_data="adm_edit_setting|sms_api_key|api"),
+    )
     builder.row(types.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_main"))
     await call.message.edit_text(text, reply_markup=builder.as_markup())

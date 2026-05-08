@@ -14,7 +14,7 @@ def admin_main_keyboard():
         ("✉️ Xabar yuborish", "adm_broadcast", "📊 Statistika", "adm_stats"),
         ("👤 Foydalanuvchi", "adm_user_lookup", "📚 Qo'llanma sozlash ⚙️", "adm_guide"),
         ("🛍 Chegirmalar", "adm_discounts", "🤖 Bot holati", "adm_bot_status"),
-        ("⚖️ Foizni o'rnatish", "adm_markup", "🔑 API sozlamalari", "adm_api"),
+        ("⚖️ Foizni o'rnatish", "adm_markup", "🔑 API key", "adm_api"),
         ("⚙️ Referal sozlamalari", "adm_referral", "🔍 Buyurtma tekshirish", "adm_order_check"),
         ("📢 Kanallar", "adm_channels", "💳 To'lov usullari", "adm_payment_methods"),
         ("🎟 Promokod", "adm_promocode", "🎁 Kunlik bonus", "adm_daily_bonus"),

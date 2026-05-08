@@ -115,6 +115,20 @@ def _guide_keyboard():
     return builder.as_markup()
 
 
+def _api_settings_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        types.InlineKeyboardButton(text="🚀 SMM URL", callback_data="adm_edit_setting|smm_api_url|api"),
+        types.InlineKeyboardButton(text="🔑 SMM KEY", callback_data="adm_edit_setting|smm_api_key|api"),
+    )
+    builder.row(
+        types.InlineKeyboardButton(text="📱 SMS URL", callback_data="adm_edit_setting|sms_api_url|api"),
+        types.InlineKeyboardButton(text="🔑 SMS KEY", callback_data="adm_edit_setting|sms_api_key|api"),
+    )
+    builder.row(types.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_main"))
+    return builder.as_markup()
+
+
 def _channels_keyboard(channels: list[str]):
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -263,6 +277,20 @@ async def _render_guide_settings(target):
         f"Support: <code>{settings.get('support_link', '')}</code>"
     )
     await _send_or_edit(target, text, _guide_keyboard())
+
+
+async def _render_api_settings(target):
+    settings = await db.get_settings(["smm_api_url", "smm_api_key", "sms_api_url", "sms_api_key"])
+    text = (
+        "🔑 <b>API key</b>\n\n"
+        "🚀 <b>Nakrutka API</b>\n"
+        f"🌐 URL: <code>{settings.get('smm_api_url') or 'sozlanmagan'}</code>\n"
+        f"🔐 KEY: <code>{_mask_secret(settings.get('smm_api_key'))}</code>\n\n"
+        "📱 <b>Raqam API</b>\n"
+        f"🌐 URL: <code>{settings.get('sms_api_url') or 'sozlanmagan'}</code>\n"
+        f"🔐 KEY: <code>{_mask_secret(settings.get('sms_api_key'))}</code>"
+    )
+    await _send_or_edit(target, text, _api_settings_keyboard())
 
 
 async def _render_discount_settings(target):
@@ -450,6 +478,7 @@ def _view_renderer(return_view):
     return {
         "content": _render_content_settings,
         "guide": _render_guide_settings,
+        "api": _render_api_settings,
         "discounts": _render_discount_settings,
         "markup": _render_markup_settings,
         "referral": _render_referral_settings,
