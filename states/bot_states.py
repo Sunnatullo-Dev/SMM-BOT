@@ -30,6 +30,8 @@ class AdminStates(StatesGroup):
     searching_user = State()
     searching_order = State()
     editing_user_balance = State()
+    adding_balance_id = State()
+    adding_balance_amount = State()
     editing_setting = State()
     editing_service_price = State()
     broadcasting = State()
